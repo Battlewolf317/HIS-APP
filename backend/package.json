@@ -1,0 +1,18 @@
+{
+  "name": "his-app-backend",
+  "version": "1.0.0",
+  "description": "Backend HIS — struktur modular (modul Patient)",
+  "type": "module",
+  "scripts": {
+    "start": "node src/app.js",
+    "backup": "node scripts/backup-db.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.12.0"
+  }
+}
