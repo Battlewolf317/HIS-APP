@@ -9,6 +9,7 @@ import type { Patient } from "../patient/types";
 import { getPatients } from "../patient/patientApi";
 import type { PatientProfile } from "./types";
 import { getProfile } from "./profilApi";
+import AsistenKlinis from "./AsistenKlinis";
 import { Toolbar, Btn, Badge, Card, StatCard, sap, th, td, tableStyle, inp } from "../shell/ui";
 
 const TIPE_COLOR: Record<string, string> = { RJ: sap.blue, RI: sap.orange, IGD: sap.red };
@@ -105,6 +106,9 @@ export default function ProfilPage({ initialPatientId, onBack }: { initialPatien
                 </div>
               </div>
             </Card>
+
+            {/* asisten klinis (AI tanya-jawab riwayat) */}
+            <AsistenKlinis patientId={profile.patient.id} patientNama={profile.patient.nama} />
 
             {/* statistik */}
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
