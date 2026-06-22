@@ -892,6 +892,107 @@ export async function initDb() {
       created_at      TIMESTAMP DEFAULT now()
     )
   `);
+
+  // -------------------------------------------------------------------
+  // SEED DEMO KAYA (untuk showcase Asisten Klinis / AI).
+  //  Hanya jalan bila belum ada rekam medis (DB fresh, mis. Neon cloud).
+  //  Data diikat ke pasien AURELYN (RM000001): diagnosa, antibiotik,
+  //  lab/rad, operasi, alergi, CPPT, dan penempatan kamar.
+  // -------------------------------------------------------------------
+  const mrCount = await pool.query("SELECT COUNT(*)::int AS n FROM medical_record");
+  if (mrCount.rows[0].n === 0) {
+    const p1row = await pool.query("SELECT id FROM patient WHERE mrn = 'RM000001' LIMIT 1");
+    const p1 = p1row.rows[0]?.id;
+    if (p1) {
+      // kunjungan rawat inap aktif (saat ini)
+      const encRI = (await pool.query(
+        `INSERT INTO encounter (encounter_no, patient_id, tipe, poli, dokter, keluhan, status, tgl_masuk)
+         VALUES ('ENC20260620001', $1, 'RI', 'Ruang Rawat Inap', 'dr. SETYA W, Sp.PD',
+                 'Demam tinggi 4 hari, sesak napas', 'AKTIF', now() - interval '2 day')
+         RETURNING id`,
+        [p1]
+      )).rows[0].id;
+
+      // kunjungan lama (rawat jalan, selesai ~3 bulan lalu)
+      const encLama = (await pool.query(
+        `INSERT INTO encounter (encounter_no, patient_id, tipe, poli, dokter, keluhan, status, tgl_masuk, tgl_keluar)
+         VALUES ('ENC20260315002', $1, 'RJ', 'Poli Penyakit Dalam', 'dr. SETYA W, Sp.PD',
+                 'Nyeri saat berkemih', 'SELESAI', now() - interval '90 day', now() - interval '90 day')
+         RETURNING id`,
+        [p1]
+      )).rows[0].id;
+
+      // diagnosa (medical_record)
+      await pool.query(
+        `INSERT INTO medical_record (encounter_id, anamnesa, pemeriksaan, diagnosa_code, diagnosa_nama, tindak_lanjut, dokter) VALUES
+         ($1, 'Demam 4 hari, batuk berdahak, sesak', 'RR 28x/mnt, ronki basah lobus kanan', 'J18.9', 'Pneumonia, tidak spesifik', 'Rawat inap + antibiotik IV', 'dr. SETYA W, Sp.PD'),
+         ($1, 'Riwayat DM tidak terkontrol', 'GDS 320 mg/dL', 'E11.9', 'Diabetes melitus tipe 2 tanpa komplikasi', 'Atur diet DM + terapi', 'dr. SETYA W, Sp.PD'),
+         ($2, 'Nyeri & panas saat berkemih', 'Nyeri tekan suprapubik', 'N39.0', 'Infeksi saluran kemih (ISK)', 'Antibiotik oral 5 hari', 'dr. SETYA W, Sp.PD')`,
+        [encRI, encLama]
+      );
+
+      // resep (RESEP) — mengandung antibiotik (terdeteksi dari deskripsi)
+      const resep2 = (await pool.query(
+        `INSERT INTO clinical_order (encounter_id, jenis, deskripsi, harga, status)
+         VALUES ($1, 'RESEP', 'Amoxicillin 500mg kapsul, 3x1 (5 hari)', 8000, 'DONE') RETURNING id`,
+        [encLama]
+      )).rows[0].id;
+      await pool.query(
+        `INSERT INTO clinical_order (encounter_id, jenis, deskripsi, harga, status) VALUES
+         ($1, 'RESEP', 'Ceftriaxone 1g IV /12 jam', 45000, 'DONE'),
+         ($1, 'RESEP', 'Paracetamol 500mg PO bila demam', 2000, 'DONE')`,
+        [encRI]
+      );
+
+      // penunjang (LAB / RAD) dengan hasil
+      await pool.query(
+        `INSERT INTO clinical_order (encounter_id, jenis, deskripsi, harga, status, hasil) VALUES
+         ($1, 'LAB', 'Darah Lengkap', 85000, 'DONE', 'Leukosit 15.300/uL (tinggi), Hb 11.2 g/dL'),
+         ($1, 'RAD', 'Rontgen Thorax', 120000, 'DONE', 'Infiltrat lobus kanan bawah — sesuai pneumonia')`,
+        [encRI]
+      );
+
+      // dispensing antibiotik (link ke master inv_item Amoxicillin = OBT0002)
+      const amox = (await pool.query("SELECT id FROM inv_item WHERE kode = 'OBT0002' LIMIT 1")).rows[0]?.id;
+      if (amox) {
+        await pool.query(
+          `INSERT INTO pharmacy_dispense (order_id, item_id, qty, dispensed_by) VALUES ($1, $2, 15, 'APOTEKER')`,
+          [resep2, amox]
+        );
+      }
+
+      // operasi / tindakan
+      await pool.query(
+        `INSERT INTO operasi (encounter_id, nama_tindakan, kategori, kamar_ot, dokter_bedah, dokter_anestesi, jenis_anestesi, tgl_operasi, durasi_menit, diagnosa_pre, status) VALUES
+         ($1, 'Pemasangan CVC (Central Venous Catheter)', 'SEDANG', 'OK-2', 'dr. BUDI, Sp.B', 'dr. ANE, Sp.An', 'LOKAL', now() - interval '1 day', 45, 'Sepsis e.c pneumonia', 'SELESAI')`,
+        [encRI]
+      );
+
+      // diet + alergi / pantangan
+      await pool.query(
+        `INSERT INTO diet_order (encounter_id, jenis_diet, bentuk, kalori, jadwal, pantangan, status, petugas) VALUES
+         ($1, 'DM RENDAH GARAM', 'LUNAK', 1800, 'PAGI-SIANG-MALAM', 'Alergi Penicillin; pantangan seafood', 'AKTIF', 'AHLI GIZI')`,
+        [encRI]
+      );
+
+      // CPPT (catatan perkembangan)
+      await pool.query(
+        `INSERT INTO cppt (encounter_id, profesi, subjektif, objektif, asesmen, plan, petugas) VALUES
+         ($1, 'DOKTER', 'Sesak berkurang, demam turun', 'RR 22x/mnt, ronki minimal', 'Pneumonia perbaikan', 'Lanjut Ceftriaxone, evaluasi besok', 'dr. SETYA W, Sp.PD'),
+         ($1, 'PERAWAT', 'Pasien lebih nyaman', 'TD 120/80, suhu 37.2', 'Pola napas membaik', 'Monitor TTV tiap 4 jam', 'NS. RINI')`,
+        [encRI]
+      );
+
+      // tempatkan pasien di kamar/bed kosong pertama
+      await pool.query(
+        `UPDATE bed SET encounter_id = $1, status = 'TERISI', updated_at = now()
+          WHERE id = (SELECT id FROM bed WHERE status = 'KOSONG' ORDER BY id LIMIT 1)`,
+        [encRI]
+      );
+
+      console.log("📦 Seed demo kaya dibuat (AURELYN: diagnosa, antibiotik, lab/rad, operasi, alergi, CPPT, kamar)");
+    }
+  }
 }
 
 export default pool;
